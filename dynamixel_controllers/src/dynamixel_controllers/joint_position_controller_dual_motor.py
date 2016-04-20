@@ -49,7 +49,8 @@ import rospy
 from dynamixel_driver.dynamixel_const import *
 from dynamixel_controllers.joint_controller import JointController
 
-from dynamixel_msgs.msg import JointState
+# from dynamixel_msgs.msg import JointState
+from slaw_msgs.msg import JointDualState
 
 class JointPositionControllerDual(JointController):
     def __init__(self, dxl_io, controller_namespace, port_namespace):
@@ -65,8 +66,10 @@ class JointPositionControllerDual(JointController):
         
         self.flipped = self.master_min_angle_raw > self.master_max_angle_raw
         
-        self.joint_state = JointState(name=self.joint_name, motor_ids=[self.master_id, self.slave_id])
+        self.joint_state = JointDualState(name=self.joint_name, motor_ids=[self.master_id, self.slave_id])
+        self.joint_state_publisher = rospy.Publisher(self.controller_namespace + '/state', JointDualState)
 
+        
     def initialize(self):
         # verify that the expected motor is connected and responding
         available_ids = rospy.get_param('dynamixel/%s/connected_ids' % self.port_namespace, [])
@@ -183,16 +186,17 @@ class JointPositionControllerDual(JointController):
                 if state.id in [self.master_id, self.slave_id]: states[state.id] = state
                                
             if self.master_id in states and self.slave_id in states:
-                state = states[self.master_id]
-                self.joint_state.motor_temps = [state.temperature, states[self.slave_id].temperature]
-                self.joint_state.goal_pos = self.raw_to_rad(state.goal, self.master_initial_position_raw, self.flipped, self.RADIANS_PER_ENCODER_TICK)
-                self.joint_state.current_pos = self.raw_to_rad(state.position, self.master_initial_position_raw, self.flipped, self.RADIANS_PER_ENCODER_TICK)
-                self.joint_state.error = state.error * self.RADIANS_PER_ENCODER_TICK
-                self.joint_state.velocity = state.speed * self.VELOCITY_PER_TICK
-                self.joint_state.load = state.load
-                self.joint_state.is_moving = state.moving
-                self.joint_state.header.stamp = rospy.Time.from_sec(state.timestamp)
-                self.joint_state_pub.publish(self.joint_state)
+                master_state = states[self.master_id]
+                slave_state = states[self.slave_id]
+                self.joint_state.motor_temps = [master_state.temperature, slave_state.temperature]
+                self.joint_state.goal_pos = [self.raw_to_rad(master_state.goal, self.master_initial_position_raw, self.flipped, self.RADIANS_PER_ENCODER_TICK), self.raw_to_rad(slave_state.goal, self.master_initial_position_raw, self.flipped, self.RADIANS_PER_ENCODER_TICK)]
+                self.joint_state.current_pos = [self.raw_to_rad(master_state.position, self.master_initial_position_raw, self.flipped, self.RADIANS_PER_ENCODER_TICK), self.raw_to_rad(slave_state.position, self.master_initial_position_raw, self.flipped, self.RADIANS_PER_ENCODER_TICK)]
+                self.joint_state.error = [master_state.error * self.RADIANS_PER_ENCODER_TICK, slave_state.error * self.RADIANS_PER_ENCODER_TICK]
+                self.joint_state.velocity = [master_state.speed * self.VELOCITY_PER_TICK, slave_state.speed * self.VELOCITY_PER_TICK]
+                self.joint_state.load = [master_state.load, slave_state.load]
+                self.joint_state.is_moving = [master_state.moving, slave_state.moving]
+                self.joint_state.header.stamp = rospy.Time.from_sec(master_state.timestamp)
+                self.joint_state_publisher.publish(self.joint_state)
 
     def process_command(self, msg):
         angle = msg.data
